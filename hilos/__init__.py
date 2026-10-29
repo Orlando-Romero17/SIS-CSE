@@ -1,0 +1,1 @@
+# Paquete "hilos": ejecuta tareas pesadas (consultas a la base de datos) en segundo plano.

@@ -1,17 +1,26 @@
+"""
+nuevo_usuario.py
+Ventana emergente para CREAR un usuario nuevo o EDITAR uno existente.
+Se abre desde Gestionar usuarios (botones "Nuevo usuario" y "Editar").
+Guarda con el ORM (repositorio.py).
+"""
 import os
 import sys
+# Permite ejecutar este archivo solo, agregando la carpeta raíz al path de Python
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QLineEdit, QComboBox, QMessageBox, QFormLayout
 )
-from conexion import conectar
 from Estilos.css import CONFIGURACION
+from repositorio import (
+    obtener_usuario, existe_usuario, crear_usuario, actualizar_usuario
+)
 
 
 class NuevoUsuario(QDialog):
-    """Diálogo para crear un usuario o, si recibe `usuario_editar`, para editarlo."""
+    """Si recibe 'usuario_editar' funciona como edición; si no, como creación."""
 
     def __init__(self, usuario_editar=None, parent=None):
         super().__init__(parent)
@@ -20,12 +29,13 @@ class NuevoUsuario(QDialog):
         self.setWindowTitle("Editar usuario" if self.editando else "Nuevo usuario")
         self.setStyleSheet(CONFIGURACION)
         self.setMinimumWidth(520)
-        self.setModal(True)
+        self.setModal(True)  # bloquea la ventana de atrás hasta cerrar esta
 
         contenido = QVBoxLayout(self)
         contenido.setContentsMargins(25, 20, 25, 20)
         contenido.setSpacing(8)
 
+        # Título y subtítulo según el modo
         titulo = QLabel("Editar usuario" if self.editando else "Nuevo usuario")
         titulo.setObjectName("titulo")
         contenido.addWidget(titulo)
@@ -37,6 +47,7 @@ class NuevoUsuario(QDialog):
         sub.setObjectName("subtitulo")
         contenido.addWidget(sub)
 
+        # Formulario con los campos del usuario
         grupo = QGroupBox()
         form = QFormLayout(grupo)
         self.nombre = QLineEdit()
@@ -60,10 +71,7 @@ class NuevoUsuario(QDialog):
         form.addRow("Confirmar contraseña", self.confirmar)
         contenido.addWidget(grupo)
 
-        self.mensaje = QLabel("")
-        self.mensaje.setStyleSheet("color:#c0392b;")
-        contenido.addWidget(self.mensaje)
-
+        # Botones inferiores
         botones = QHBoxLayout()
         botones.addStretch()
         limpiar = QPushButton("Limpiar")
@@ -80,111 +88,80 @@ class NuevoUsuario(QDialog):
         botones.addWidget(guardar)
         contenido.addLayout(botones)
 
+        # En modo edición se cargan los datos actuales del usuario
         if self.editando:
             self.cargar_usuario()
 
     def limpiar(self):
+        """Vacía todos los campos del formulario."""
         for campo in (self.nombre, self.usuario, self.correo, self.password, self.confirmar):
             campo.clear()
         self.rol.setCurrentIndex(0)
         self.estado.setCurrentIndex(0)
-        self.mensaje.setText("")
 
     def cargar_usuario(self):
+        """READ: trae los datos del usuario a editar y los muestra en el formulario."""
         try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-            cursor.execute("""
-                SELECT nombre_completo, usuario, correo, rol, estado
-                FROM usuarios WHERE usuario = %s
-            """, (self.usuario_original,))
-            r = cursor.fetchone()
-            cursor.close()
-            conexion.close()
-            if r:
-                self.nombre.setText(r[0] or "")
-                self.usuario.setText(r[1] or "")
-                self.correo.setText(r[2] or "")
-                self.rol.setCurrentText(r[3] or "")
-                self.estado.setCurrentText(r[4] or "")
+            d = obtener_usuario(self.usuario_original)
+            if d:
+                self.nombre.setText(d["nombre_completo"])
+                self.usuario.setText(d["usuario"])
+                self.correo.setText(d["correo"])
+                self.rol.setCurrentText(d["rol"])
+                self.estado.setCurrentText(d["estado"])
         except Exception as e:
-            self.mensaje.setText(f"Error: {e}")
+            QMessageBox.critical(self, "Error", f"No se pudo cargar el usuario:\n{e}")
 
     def guardar_usuario(self):
+        """Valida los datos (con MessageBox) y crea o actualiza el usuario con el ORM."""
         nombre = self.nombre.text().strip()
         usuario = self.usuario.text().strip()
         correo = self.correo.text().strip()
         password = self.password.text()
 
+        # ----- Validaciones -----
         if not nombre:
-            self.mensaje.setText("Ingrese el nombre")
+            QMessageBox.warning(self, "Validación", "Ingrese el nombre")
             return
         if not usuario:
-            self.mensaje.setText("Ingrese el usuario")
+            QMessageBox.warning(self, "Validación", "Ingrese el usuario")
             return
         if correo and "@" not in correo:
-            self.mensaje.setText("El correo no es válido")
+            QMessageBox.warning(self, "Validación", "El correo no es válido")
             return
         if not self.editando and not password:
-            self.mensaje.setText("Ingrese una contraseña")
+            QMessageBox.warning(self, "Validación", "Ingrese una contraseña")
             return
         if password != self.confirmar.text():
-            self.mensaje.setText("Las contraseñas no coinciden")
+            QMessageBox.warning(self, "Validación", "Las contraseñas no coinciden")
             return
 
         try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-
-            # Evitar usuarios duplicados
-            cursor.execute(
-                "SELECT COUNT(*) FROM usuarios WHERE usuario=%s AND usuario<>%s",
-                (usuario, self.usuario_original or "")
-            )
-            if cursor.fetchone()[0] > 0:
-                self.mensaje.setText("Ya existe un usuario con ese nombre")
-                cursor.close()
-                conexion.close()
+            # No se permiten dos usuarios con el mismo nombre
+            if existe_usuario(usuario, excluir=self.usuario_original):
+                QMessageBox.warning(self, "Validación", "Ya existe un usuario con ese nombre")
                 return
 
-            if self.editando:
-                if password:
-                    cursor.execute("""
-                        UPDATE usuarios
-                        SET nombre_completo=%s, usuario=%s, correo=%s,
-                            contrasena=%s, rol=%s, estado=%s
-                        WHERE usuario=%s
-                    """, (nombre, usuario, correo, password,
-                          self.rol.currentText(), self.estado.currentText(),
-                          self.usuario_original))
-                else:
-                    cursor.execute("""
-                        UPDATE usuarios
-                        SET nombre_completo=%s, usuario=%s, correo=%s,
-                            rol=%s, estado=%s
-                        WHERE usuario=%s
-                    """, (nombre, usuario, correo,
-                          self.rol.currentText(), self.estado.currentText(),
-                          self.usuario_original))
-            else:
-                cursor.execute("""
-                    INSERT INTO usuarios
-                    (nombre_completo, usuario, correo, contrasena, rol, estado)
-                    VALUES (%s,%s,%s,%s,%s,%s)
-                """, (nombre, usuario, correo, password,
-                      self.rol.currentText(), self.estado.currentText()))
+            datos = {
+                "nombre_completo": nombre, "usuario": usuario, "correo": correo,
+                "rol": self.rol.currentText(), "estado": self.estado.currentText(),
+            }
+            if password:  # en edición, contraseña vacía = conservar la actual
+                datos["contrasena"] = password
 
-            conexion.commit()
-            cursor.close()
-            conexion.close()
+            if self.editando:
+                actualizar_usuario(self.usuario_original, datos)   # UPDATE
+            else:
+                crear_usuario(datos)                                # CREATE
 
             QMessageBox.information(self, "Usuarios", "Usuario guardado correctamente")
-            self.accept()
+            self.accept()  # cierra la ventana indicando éxito
 
         except Exception as e:
-            self.mensaje.setText(f"Error: {e}")
+            QMessageBox.critical(self, "Error", f"No se pudo guardar:\n{e}")
 
 
+# Solo para probar esta ventana sola
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = NuevoUsuario()

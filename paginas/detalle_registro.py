@@ -1,3 +1,9 @@
+"""
+detalle_registro.py
+Ventana para ver, editar, desactivar, eliminar e imprimir un ciudadano.
+Si se abre sin ID funciona como formulario de "Nuevo ciudadano".
+Todas las operaciones usan el ORM (repositorio.py).
+"""
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,10 +15,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDate
 from PySide6.QtGui import QTextDocument
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-from conexion import conectar
 from Estilos.css import CONFIGURACION
 from utilidades import confirmar_y_eliminar, ESTILO_PELIGRO
+from repositorio import (
+    obtener_ciudadano, existe_cedula, crear_ciudadano, actualizar_ciudadano,
+    eliminar_ciudadano
+)
 
+# (nombre de la columna en la BD, etiqueta que ve el usuario)
 CAMPOS = [
     ("cedula", "Cédula"),
     ("nombres", "Nombres"),
@@ -25,17 +35,15 @@ CAMPOS = [
     ("telefono", "Teléfono"),
     ("correo", "Correo"),
 ]
+# Fondo gris para los campos cuando solo se están consultando
 RO_STYLE = "background-color:#eef1f4;"
 
 
 class DetalleRegistro(QDialog):
-    """Ver, editar, desactivar, imprimir y eliminar un ciudadano.
-    Si id_ciudadano es None, funciona como formulario de 'Nuevo ciudadano'."""
-
     def __init__(self, id_ciudadano=None, parent=None):
         super().__init__(parent)
         self.id_ciudadano = id_ciudadano
-        self.creando = id_ciudadano is None
+        self.creando = id_ciudadano is None   # True = formulario de nuevo ciudadano
         self.editando = False
         self.setWindowTitle("Nuevo ciudadano" if self.creando else "Detalle de registro")
         self.setStyleSheet(CONFIGURACION)
@@ -56,9 +64,10 @@ class DetalleRegistro(QDialog):
 
         fila = QHBoxLayout()
 
+        # ----- Izquierda: datos del ciudadano -----
         datos = QGroupBox("Información del ciudadano")
         form = QFormLayout(datos)
-        self.campos = {}
+        self.campos = {}  # nombre de columna -> campo de texto
         for nombre, etiqueta in CAMPOS:
             w = QLineEdit()
             self.campos[nombre] = w
@@ -68,6 +77,7 @@ class DetalleRegistro(QDialog):
         form.addRow("Estado:", self.estado)
         fila.addWidget(datos, 3)
 
+        # ----- Derecha: botones de acciones -----
         acciones = QGroupBox("Acciones")
         al = QVBoxLayout(acciones)
         self.btn_editar = QPushButton("Guardar registro" if self.creando else "Editar registro")
@@ -94,6 +104,7 @@ class DetalleRegistro(QDialog):
         contenido.addStretch()
 
         if self.creando:
+            # En modo "nuevo" solo tienen sentido Guardar y Cancelar
             for b in (self.btn_estado, self.btn_eliminar, self.btn_imprimir):
                 b.hide()
             self.btn_cerrar.setText("Cancelar")
@@ -102,8 +113,9 @@ class DetalleRegistro(QDialog):
             self.cargar_detalle()
             self._set_editable(False)
 
-    # ---------- utilidades internas ----------
+    # ---------- Utilidades internas ----------
     def _set_editable(self, editable):
+        """Activa o desactiva la edición de los campos y ajusta los botones."""
         self.editando = editable
         for w in self.campos.values():
             w.setReadOnly(not editable)
@@ -116,6 +128,7 @@ class DetalleRegistro(QDialog):
             self.btn_eliminar.setEnabled(not editable)
 
     def _poner_estado(self, valor):
+        """Muestra el estado y cambia el texto del botón Activar/Desactivar."""
         if self.estado.findText(valor) < 0:
             self.estado.addItem(valor)
         self.estado.setCurrentText(valor)
@@ -123,34 +136,28 @@ class DetalleRegistro(QDialog):
             "Activar registro" if valor.lower().startswith("inact") else "Desactivar registro"
         )
 
-    # ---------- cargar ----------
+    # ---------- READ ----------
     def cargar_detalle(self):
+        """Trae el ciudadano desde la BD (ORM) y llena los campos."""
         try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-            columnas = ", ".join(n for n, _ in CAMPOS) + ", estado"
-            cursor.execute(
-                f"SELECT {columnas} FROM ciudadanos WHERE id_ciudadano = %s",
-                (self.id_ciudadano,)
-            )
-            r = cursor.fetchone()
-            cursor.close()
-            conexion.close()
-            if r:
-                for (nombre, _), valor in zip(CAMPOS, r):
-                    self.campos[nombre].setText("" if valor is None else str(valor))
-                self._poner_estado(str(r[-1] or "Activo"))
+            d = obtener_ciudadano(self.id_ciudadano)
+            if d:
+                for nombre, _ in CAMPOS:
+                    self.campos[nombre].setText(d[nombre])
+                self._poner_estado(d["estado"] or "Activo")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"No se pudo cargar el registro:\n{e}")
 
-    # ---------- guardar (crear / actualizar) ----------
+    # ---------- CREATE / UPDATE ----------
     def alternar_edicion(self):
+        """Primer clic: habilita la edición. Segundo clic: guarda los cambios."""
         if self.creando or self.editando:
             self.guardar()
         else:
             self._set_editable(True)
 
     def cerrar_o_cancelar(self):
+        """Si se está editando, cancela y recarga; si no, cierra la ventana."""
         if self.editando and not self.creando:
             self.cargar_detalle()
             self._set_editable(False)
@@ -158,8 +165,10 @@ class DetalleRegistro(QDialog):
             self.reject()
 
     def guardar(self):
+        """Valida (con MessageBox) y guarda: INSERT si es nuevo, UPDATE si existe."""
         valores = {n: self.campos[n].text().strip() for n, _ in CAMPOS}
 
+        # ----- Validaciones -----
         if not valores["cedula"] or not valores["nombres"] or not valores["apellidos"]:
             QMessageBox.warning(self, "Datos incompletos",
                                 "Cédula, nombres y apellidos son obligatorios.")
@@ -169,42 +178,24 @@ class DetalleRegistro(QDialog):
             QMessageBox.warning(self, "Fecha inválida",
                                 "Use el formato AAAA-MM-DD (ejemplo: 1990-05-23).")
             return
-        valores["fecha_nacimiento"] = fecha or None
         if valores["correo"] and "@" not in valores["correo"]:
             QMessageBox.warning(self, "Correo inválido", "Revise el correo electrónico.")
             return
 
         estado = self.estado.currentText()
-        try:
-            conexion = conectar()
-            cursor = conexion.cursor()
+        datos = dict(valores)
+        datos["estado"] = estado
 
-            cursor.execute(
-                "SELECT COUNT(*) FROM ciudadanos WHERE cedula=%s AND id_ciudadano<>%s",
-                (valores["cedula"], self.id_ciudadano or 0)
-            )
-            if cursor.fetchone()[0] > 0:
+        try:
+            # La cédula no puede repetirse entre ciudadanos
+            if existe_cedula(valores["cedula"], excluir_id=self.id_ciudadano):
                 QMessageBox.warning(self, "Duplicado", "Ya existe un ciudadano con esa cédula.")
-                cursor.close()
-                conexion.close()
                 return
 
-            nombres_col = [n for n, _ in CAMPOS]
-            datos = [valores[n] for n in nombres_col] + [estado]
-
             if self.creando:
-                columnas = ", ".join(nombres_col + ["estado"])
-                marcas = ", ".join(["%s"] * len(datos))
-                cursor.execute(f"INSERT INTO ciudadanos ({columnas}) VALUES ({marcas})", datos)
+                crear_ciudadano(datos)                              # CREATE
             else:
-                sets = ", ".join(f"{n}=%s" for n in nombres_col + ["estado"])
-                cursor.execute(
-                    f"UPDATE ciudadanos SET {sets} WHERE id_ciudadano=%s",
-                    datos + [self.id_ciudadano]
-                )
-            conexion.commit()
-            cursor.close()
-            conexion.close()
+                actualizar_ciudadano(self.id_ciudadano, datos)      # UPDATE
 
             QMessageBox.information(self, "Registro", "Registro guardado correctamente")
             if self.creando:
@@ -212,36 +203,31 @@ class DetalleRegistro(QDialog):
             else:
                 self._poner_estado(estado)
                 self._set_editable(False)
-
         except Exception as e:
             QMessageBox.warning(self, "Error", f"No se pudo guardar:\n{e}")
 
-    # ---------- desactivar / activar ----------
+    # ---------- Desactivar / activar ----------
     def cambiar_estado(self):
+        """Alterna el estado del ciudadano entre Activo e Inactivo (UPDATE)."""
         nuevo = "Activo" if self.estado.currentText().lower().startswith("inact") else "Inactivo"
         try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-            cursor.execute("UPDATE ciudadanos SET estado=%s WHERE id_ciudadano=%s",
-                           (nuevo, self.id_ciudadano))
-            conexion.commit()
-            cursor.close()
-            conexion.close()
+            actualizar_ciudadano(self.id_ciudadano, {"estado": nuevo})
             self._poner_estado(nuevo)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"No se pudo cambiar el estado:\n{e}")
 
-    # ---------- eliminar ----------
+    # ---------- DELETE ----------
     def eliminar(self):
+        """Confirma y elimina el ciudadano; si se elimina, cierra la ventana."""
         nombre = f"{self.campos['nombres'].text()} {self.campos['apellidos'].text()}".strip()
         if confirmar_y_eliminar(
-            self, "DELETE FROM ciudadanos WHERE id_ciudadano=%s",
-            (self.id_ciudadano,), f"el registro de «{nombre}»"
+            self, lambda: eliminar_ciudadano(self.id_ciudadano), f"el registro de «{nombre}»"
         ):
             self.accept()
 
-    # ---------- imprimir ----------
+    # ---------- Imprimir ----------
     def imprimir(self):
+        """Arma una versión imprimible de la ficha y abre el diálogo de impresión."""
         filas = "".join(
             f"<tr><td><b>{etiqueta}</b></td><td>{self.campos[n].text()}</td></tr>"
             for n, etiqueta in CAMPOS
@@ -259,6 +245,7 @@ class DetalleRegistro(QDialog):
             doc.print_(printer)
 
 
+# Solo para probar esta ventana sola (ID 1)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = DetalleRegistro(1)

@@ -1,11 +1,15 @@
 
+import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QGroupBox, QLineEdit, QComboBox
+    QPushButton, QGroupBox, QLineEdit, QComboBox, QMessageBox
 )
 from conexion import conectar
 from Estilos.css import CONFIGURACION
+from paginas.respaldo import RespaldoInformacion
 
 
 class Configuracion(QWidget):
@@ -41,6 +45,7 @@ class Configuracion(QWidget):
                     "text-align:left; color:#20252b; background:#f1f3f5; "
                     "border:none; border-radius:4px; padding:10px 12px;"
                 )
+            b.clicked.connect(lambda _=False, t=texto: self.abrir_seccion(t))
             ml.addWidget(b)
         ml.addStretch()
         cuerpo.addWidget(menu, 1)
@@ -83,6 +88,14 @@ class Configuracion(QWidget):
         contenido.addStretch()
 
         self.cargar_configuracion()
+
+    def abrir_seccion(self, nombre):
+        if nombre == "Respaldo":
+            RespaldoInformacion(self).exec()
+        elif nombre != "General":
+            QMessageBox.information(
+                self, nombre, f"La sección «{nombre}» estará disponible próximamente."
+            )
 
     def cargar_configuracion(self):
         try:

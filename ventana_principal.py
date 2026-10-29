@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QLineEdit, QGroupBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QStackedWidget,QMessageBox
+    QHeaderView, QStackedWidget, QMessageBox
 )
 from PySide6.QtCore import Qt
 from conexion import conectar
@@ -11,6 +11,8 @@ from Estilos.css import CONFIGURACION
 from paginas.consultar_registros import ConsultarRegistros
 from paginas.gestionar_usuarios import GestionarUsuarios
 from paginas.reportes import Reportes
+
+
 def crear_sidebar(stack, opciones, al_cerrar_sesion=None):
     sidebar = QFrame()
     sidebar.setObjectName("sidebar")
@@ -68,6 +70,7 @@ def crear_sidebar(stack, opciones, al_cerrar_sesion=None):
         cerrar.clicked.connect(al_cerrar_sesion)
     layout.addWidget(cerrar)
     return sidebar
+
 
 def pagina_vacia(titulo_texto, subtitulo_texto):
     pagina = QWidget()
@@ -138,11 +141,20 @@ class PaginaPanel(QWidget):
         self.cargar_estadisticas()
 
     def cargar_estadisticas(self):
+        consultas = [
+            (self.lbl_usuarios, "SELECT COUNT(*) FROM usuarios"),
+            (self.lbl_ciudadanos, "SELECT COUNT(*) FROM ciudadanos"),
+            (self.lbl_tramites, "SELECT COUNT(*) FROM tramites"),
+        ]
         try:
             conexion = conectar()
             cursor = conexion.cursor()
-            cursor.execute("SELECT COUNT(*) FROM usuarios")
-            self.lbl_usuarios.setText(str(cursor.fetchone()[0]))
+            for etiqueta, sql in consultas:
+                try:
+                    cursor.execute(sql)
+                    etiqueta.setText(str(cursor.fetchone()[0]))
+                except Exception as e:
+                    print("Error:", e)
             cursor.close()
             conexion.close()
         except Exception as e:
@@ -158,11 +170,14 @@ class VentanaPrincipal(QWidget):
         self.setStyleSheet(CONFIGURACION)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(PaginaPanel())                                              # 0
+        self.stack.addWidget(PaginaPanel())          # 0
         self.stack.addWidget(ConsultarRegistros())   # 1
-        self.stack.addWidget(GestionarUsuarios())  # 2
-        self.stack.addWidget(Reportes())                # 3
-        self.stack.addWidget(Configuracion())                                            # 4
+        self.stack.addWidget(GestionarUsuarios())    # 2
+        self.stack.addWidget(Reportes())             # 3
+        self.stack.addWidget(Configuracion())        # 4
+
+        # Al cambiar de página, se vuelven a cargar los datos
+        self.stack.currentChanged.connect(self._refrescar)
 
         opciones = [
             "⌂  Panel principal",
@@ -175,8 +190,14 @@ class VentanaPrincipal(QWidget):
         principal = QHBoxLayout(self)
         principal.setContentsMargins(0, 0, 0, 0)
         principal.setSpacing(0)
-        principal.addWidget(crear_sidebar(self.stack, opciones,self.cerrar_sesion))
+        principal.addWidget(crear_sidebar(self.stack, opciones, self.cerrar_sesion))
         principal.addWidget(self.stack, 1)
+
+    def _refrescar(self, indice):
+        pagina = self.stack.widget(indice)
+        for metodo in ("cargar_estadisticas", "cargar_ciudadanos", "cargar_usuarios"):
+            if hasattr(pagina, metodo):
+                getattr(pagina, metodo)()
 
     def cerrar_sesion(self):
         r = QMessageBox.question(
@@ -189,6 +210,8 @@ class VentanaPrincipal(QWidget):
         self.login = InicioSesion()
         self.login.show()
         self.close()
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = VentanaPrincipal()

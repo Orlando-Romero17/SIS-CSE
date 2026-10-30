@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QDate, QUrl
 from PySide6.QtGui import QDesktopServices
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from utilidades import exportar_tabla
 from hilos.trabajador import ejecutar_en_hilo
 from repositorio import datos_reporte, registrar_reporte
@@ -186,7 +186,7 @@ class Reportes(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = Reportes()
-    ventana.setStyleSheet(CONFIGURACION)
+    ventana.setStyleSheet(GENERAL)
     ventana.resize(900, 650)
     ventana.show()
     sys.exit(app.exec())

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDate
 from PySide6.QtGui import QTextDocument
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from utilidades import confirmar_y_eliminar, ESTILO_PELIGRO
 from repositorio import (
     obtener_ciudadano, existe_cedula, crear_ciudadano, actualizar_ciudadano,
@@ -46,7 +46,7 @@ class DetalleRegistro(QDialog):
         self.creando = id_ciudadano is None   # True = formulario de nuevo ciudadano
         self.editando = False
         self.setWindowTitle("Nuevo ciudadano" if self.creando else "Detalle de registro")
-        self.setStyleSheet(CONFIGURACION)
+        self.setStyleSheet(GENERAL)
         self.setMinimumSize(760, 520)
         self.setModal(True)
 

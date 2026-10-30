@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QGroupBox, QLineEdit, QComboBox, QMessageBox
 )
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from paginas.respaldo import RespaldoInformacion
 from hilos.trabajador import ejecutar_en_hilo
 from repositorio import obtener_configuracion, guardar_configuracion as guardar_config_bd
@@ -144,7 +144,7 @@ class Configuracion(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = Configuracion()
-    ventana.setStyleSheet(CONFIGURACION)
+    ventana.setStyleSheet(GENERAL)
     ventana.resize(900, 650)
     ventana.show()
     sys.exit(app.exec())

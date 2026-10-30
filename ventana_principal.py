@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QStackedWidget, QMessageBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from paginas.configuracion import Configuracion
 from paginas.consultar_registros import ConsultarRegistros
 from paginas.gestionar_usuarios import GestionarUsuarios
@@ -170,7 +170,7 @@ class VentanaPrincipal(QWidget):
         self.setWindowTitle("SIS-CSE - Sistema de Gestión")
         self.resize(1150, 700)
         self.setMinimumSize(950, 620)
-        self.setStyleSheet(CONFIGURACION)
+        self.setStyleSheet(GENERAL)
 
         # Páginas del sistema (el orden coincide con los botones del menú)
         self.pagina_consulta = ConsultarRegistros()

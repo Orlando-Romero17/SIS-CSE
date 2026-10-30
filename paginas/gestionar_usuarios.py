@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QMessageBox
 )
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from utilidades import exportar_tabla, confirmar_y_eliminar, ESTILO_PELIGRO
 from paginas.nuevo_usuario import NuevoUsuario
 from hilos.trabajador import ejecutar_en_hilo
@@ -149,7 +149,7 @@ class GestionarUsuarios(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = GestionarUsuarios()
-    ventana.setStyleSheet(CONFIGURACION)
+    ventana.setStyleSheet(GENERAL)
     ventana.resize(900, 650)
     ventana.show()
     sys.exit(app.exec())

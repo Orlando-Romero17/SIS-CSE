@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QAbstractItemView, QFileDialog, QMessageBox
 )
 from conexion import conectar
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from hilos.trabajador import ejecutar_en_hilo
 from repositorio import listar_respaldos, registrar_respaldo
 
@@ -113,7 +113,7 @@ class RespaldoInformacion(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Respaldo de información")
-        self.setStyleSheet(CONFIGURACION)
+        self.setStyleSheet(GENERAL)
         self.resize(780, 620)
         self.setModal(True)
 

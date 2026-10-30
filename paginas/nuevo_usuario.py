@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QLineEdit, QComboBox, QMessageBox, QFormLayout
 )
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from repositorio import (
     obtener_usuario, existe_usuario, crear_usuario, actualizar_usuario
 )
@@ -27,7 +27,7 @@ class NuevoUsuario(QDialog):
         self.usuario_original = usuario_editar
         self.editando = usuario_editar is not None
         self.setWindowTitle("Editar usuario" if self.editando else "Nuevo usuario")
-        self.setStyleSheet(CONFIGURACION)
+        self.setStyleSheet(GENERAL)
         self.setMinimumWidth(520)
         self.setModal(True)  # bloquea la ventana de atrás hasta cerrar esta
 

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QMessageBox
 )
 from PySide6.QtCore import Qt
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from utilidades import exportar_tabla, confirmar_y_eliminar, ESTILO_PELIGRO
 from paginas.detalle_registro import DetalleRegistro
 from hilos.trabajador import ejecutar_en_hilo
@@ -164,7 +164,7 @@ class ConsultarRegistros(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = ConsultarRegistros()
-    ventana.setStyleSheet(CONFIGURACION)
+    ventana.setStyleSheet(GENERAL)
     ventana.resize(900, 650)
     ventana.show()
     sys.exit(app.exec())

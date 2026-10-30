@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QCheckBox, QGroupBox, QHBoxLayout, QVBoxLayout, QMessageBox
 )
 from PySide6.QtCore import Qt
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
 from ventana_principal import VentanaPrincipal
 from hilos.trabajador import ejecutar_en_hilo
 from repositorio import validar_login
@@ -21,7 +21,7 @@ class InicioSesion(QMainWindow):
         self.setWindowTitle("SIS-CSE - Sistema de Gestión")
         self.resize(1050, 700)
         self.setMinimumSize(900, 600)
-        self.setStyleSheet(CONFIGURACION)
+        self.setStyleSheet(GENERAL)
         self.crear_interfaz()
 
     def crear_interfaz(self):

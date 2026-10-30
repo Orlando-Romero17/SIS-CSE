@@ -7,12 +7,10 @@ Las páginas (interfaz) NO escriben SQL: llaman a estas funciones.
 Cada función abre su propia sesión, así es seguro llamarlas desde hilos.
 """
 from datetime import date, datetime
-from sqlalchemy import or_, func, text
-from modelos import SessionLocal, Usuario, Ciudadano, Configuracion, Reporte, Respaldo
-
-# Si la tabla tramites tiene una columna de fecha (ej. "fecha_registro"),
-# escriba aquí su nombre y el reporte de Trámites respetará el rango de fechas.
-COLUMNA_FECHA_TRAMITES = None
+from sqlalchemy import or_, func
+from modelos import (
+    SessionLocal, Usuario, Ciudadano, Tramite, Configuracion, Reporte, Respaldo
+)
 
 
 def _texto(valor):
@@ -23,6 +21,11 @@ def _texto(valor):
 # =====================================================================
 # USUARIOS
 # =====================================================================
+def _buscar_usuario(s, nombre_usuario):
+    """Devuelve el objeto Usuario con ese nombre de usuario (o None)."""
+    return s.query(Usuario).filter(Usuario.usuario == nombre_usuario).first()
+
+
 def listar_usuarios(filtro=""):
     """READ: lista usuarios (usuario, nombre, rol, estado); filtra si hay texto."""
     with SessionLocal() as s:
@@ -38,7 +41,7 @@ def listar_usuarios(filtro=""):
 def obtener_usuario(usuario):
     """READ: devuelve los datos de un usuario como diccionario (o None)."""
     with SessionLocal() as s:
-        u = s.get(Usuario, usuario)
+        u = _buscar_usuario(s, usuario)
         if u is None:
             return None
         return {"nombre_completo": _texto(u.nombre_completo), "usuario": _texto(u.usuario),
@@ -48,7 +51,7 @@ def obtener_usuario(usuario):
 def existe_usuario(usuario, excluir=None):
     """Valida que no haya dos usuarios con el mismo nombre de usuario."""
     with SessionLocal() as s:
-        q = s.query(func.count(Usuario.usuario)).filter(Usuario.usuario == usuario)
+        q = s.query(func.count(Usuario.id_usuario)).filter(Usuario.usuario == usuario)
         if excluir:
             q = q.filter(Usuario.usuario != excluir)
         return q.scalar() > 0
@@ -64,7 +67,7 @@ def crear_usuario(datos):
 def actualizar_usuario(usuario_original, datos):
     """UPDATE: modifica los campos recibidos de un usuario existente."""
     with SessionLocal() as s:
-        u = s.get(Usuario, usuario_original)
+        u = _buscar_usuario(s, usuario_original)
         if u is None:
             return False
         for campo, valor in datos.items():
@@ -76,7 +79,7 @@ def actualizar_usuario(usuario_original, datos):
 def eliminar_usuario(usuario):
     """DELETE: borra un usuario. Devuelve True si existía."""
     with SessionLocal() as s:
-        u = s.get(Usuario, usuario)
+        u = _buscar_usuario(s, usuario)
         if u is None:
             return False
         s.delete(u)
@@ -161,7 +164,8 @@ def actualizar_ciudadano(id_ciudadano, datos):
 
 
 def eliminar_ciudadano(id_ciudadano):
-    """DELETE: borra un ciudadano. Devuelve True si existía."""
+    """DELETE: borra un ciudadano. Devuelve True si existía.
+    Si tiene trámites asociados, MySQL lo impide (llave foránea)."""
     with SessionLocal() as s:
         c = s.get(Ciudadano, id_ciudadano)
         if c is None:
@@ -203,34 +207,36 @@ def guardar_configuracion(nombre, idioma, tema):
 def contar_estadisticas():
     """Cantidad de usuarios, ciudadanos y trámites para las tarjetas del panel."""
     with SessionLocal() as s:
-        resultado = {
-            "usuarios": s.query(func.count(Usuario.usuario)).scalar(),
+        return {
+            "usuarios": s.query(func.count(Usuario.id_usuario)).scalar(),
             "ciudadanos": s.query(func.count(Ciudadano.id_ciudadano)).scalar(),
-            "tramites": 0,
+            "tramites": s.query(func.count(Tramite.id_tramite)).scalar(),
         }
-        try:
-            resultado["tramites"] = s.execute(text("SELECT COUNT(*) FROM tramites")).scalar()
-        except Exception:
-            s.rollback()  # si la tabla tramites no existe, queda en 0
-        return resultado
+
+
+def _consulta_tramites(s):
+    """Consulta ORM de trámites unida (JOIN) con el nombre del ciudadano."""
+    return (s.query(Tramite.codigo_expediente,
+                    func.concat(Ciudadano.nombres, " ", Ciudadano.apellidos),
+                    Tramite.estado)
+            .outerjoin(Ciudadano, Tramite.id_ciudadano == Ciudadano.id_ciudadano))
 
 
 def tramites_recientes(limite=5):
     """Últimos trámites registrados: devuelve (encabezados, filas)."""
-    try:
-        with SessionLocal() as s:
-            r = s.execute(text(f"SELECT * FROM tramites ORDER BY 1 DESC LIMIT {int(limite)}"))
-            encabezados = [c.upper() for c in r.keys()]
-            return encabezados, [tuple(f) for f in r.fetchall()]
-    except Exception:
-        return [], []
+    with SessionLocal() as s:
+        filas = (_consulta_tramites(s)
+                 .order_by(Tramite.id_tramite.desc()).limit(limite).all())
+        return ["EXPEDIENTE", "CIUDADANO", "ESTADO"], [tuple(f) for f in filas]
 
 
 # =====================================================================
 # REPORTES
 # =====================================================================
 def datos_reporte(tipo, inicio, fin):
-    """Obtiene los datos de un reporte: devuelve (encabezados, filas)."""
+    """Obtiene los datos de un reporte: devuelve (encabezados, filas).
+    Las tablas actuales no tienen columna de fecha de registro, por lo que el
+    rango de fechas se guarda en la bitácora (tabla reportes) y no filtra filas."""
     with SessionLocal() as s:
         if tipo == "Registros de ciudadanos":
             filas = s.query(Ciudadano.cedula, Ciudadano.nombres, Ciudadano.apellidos,
@@ -241,14 +247,12 @@ def datos_reporte(tipo, inicio, fin):
                             Usuario.rol, Usuario.estado).all()
             encabezados = ["USUARIO", "NOMBRE", "CORREO", "ROL", "ESTADO"]
         elif tipo == "Trámites":
-            sql = "SELECT * FROM tramites"
-            params = {}
-            if COLUMNA_FECHA_TRAMITES:
-                sql += f" WHERE DATE({COLUMNA_FECHA_TRAMITES}) BETWEEN :ini AND :fin"
-                params = {"ini": inicio, "fin": fin}
-            r = s.execute(text(sql), params)
-            encabezados = [c.upper() for c in r.keys()]
-            filas = r.fetchall()
+            filas = (s.query(Tramite.codigo_expediente,
+                             func.concat(Ciudadano.nombres, " ", Ciudadano.apellidos),
+                             Tramite.descripcion, Tramite.estado)
+                     .outerjoin(Ciudadano, Tramite.id_ciudadano == Ciudadano.id_ciudadano)
+                     .order_by(Tramite.id_tramite).all())
+            encabezados = ["EXPEDIENTE", "CIUDADANO", "DESCRIPCIÓN", "ESTADO"]
         else:
             raise ValueError("Tipo de reporte no válido")
         return encabezados, [tuple(f) for f in filas]

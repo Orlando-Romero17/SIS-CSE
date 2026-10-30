@@ -9,7 +9,9 @@ modifica tablas: solo lee y escribe en las que ya existen en MySQL Workbench.
 """
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Text
+from sqlalchemy import (
+    create_engine, Column, Integer, String, Date, DateTime, Text, ForeignKey
+)
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -27,6 +29,7 @@ url = URL.create(
 
 # Engine: administra un "pool" de conexiones reutilizables y seguras entre hilos.
 # pool_pre_ping verifica que la conexión siga viva antes de usarla.
+# (Para mostrar en la defensa el SQL que genera el ORM, agregue echo=True)
 engine = create_engine(url, pool_pre_ping=True, pool_recycle=1800)
 
 # Cada operación abre su propia sesión: with SessionLocal() as s: ...
@@ -37,11 +40,11 @@ Base = declarative_base()
 
 
 class Usuario(Base):
-    """Tabla usuarios: personas con acceso al sistema.
-    Se usa 'usuario' como llave del objeto porque es un nombre único."""
+    """Tabla usuarios: personas con acceso al sistema."""
     __tablename__ = "usuarios"
-    usuario = Column(String(50), primary_key=True)
+    id_usuario = Column(Integer, primary_key=True, autoincrement=True)
     nombre_completo = Column(String(100))
+    usuario = Column(String(50))
     correo = Column(String(100))
     contrasena = Column(String(255))
     rol = Column(String(30))
@@ -49,7 +52,7 @@ class Usuario(Base):
 
 
 class Ciudadano(Base):
-    """Tabla ciudadanos: registro de ciudadanos (el CRUD principal del sistema)."""
+    """Tabla ciudadanos: registro de ciudadanos (CRUD principal del sistema)."""
     __tablename__ = "ciudadanos"
     id_ciudadano = Column(Integer, primary_key=True, autoincrement=True)
     cedula = Column(String(30))
@@ -65,6 +68,16 @@ class Ciudadano(Base):
     estado = Column(String(20))
 
 
+class Tramite(Base):
+    """Tabla tramites: trámites de los ciudadanos (relación muchos a uno con ciudadanos)."""
+    __tablename__ = "tramites"
+    id_tramite = Column(Integer, primary_key=True, autoincrement=True)
+    codigo_expediente = Column(String(50))
+    id_ciudadano = Column(Integer, ForeignKey("ciudadanos.id_ciudadano"))
+    descripcion = Column(Text)
+    estado = Column(String(30))
+
+
 class Configuracion(Base):
     """Tabla configuracion: opciones generales del sistema (una sola fila)."""
     __tablename__ = "configuracion"
@@ -77,14 +90,16 @@ class Configuracion(Base):
 class Reporte(Base):
     """Tabla reportes: bitácora de los reportes que se han generado."""
     __tablename__ = "reportes"
-    tipo_reporte = Column(String(60), primary_key=True)
-    fecha_inicio = Column(Date, primary_key=True)
-    fecha_fin = Column(Date, primary_key=True)
+    id_reporte = Column(Integer, primary_key=True, autoincrement=True)
+    tipo_reporte = Column(String(60))
+    fecha_inicio = Column(Date)
+    fecha_fin = Column(Date)
 
 
 class Respaldo(Base):
     """Tabla respaldos: historial de copias de seguridad realizadas."""
     __tablename__ = "respaldos"
-    fecha_respaldo = Column(DateTime, primary_key=True)
-    nombre_bd = Column(String(60), primary_key=True)
+    id_respaldo = Column(Integer, primary_key=True, autoincrement=True)
+    nombre_bd = Column(String(60))
     descripcion = Column(Text)
+    fecha_respaldo = Column(DateTime)

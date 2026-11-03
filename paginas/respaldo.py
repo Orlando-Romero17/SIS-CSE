@@ -1,276 +1,265 @@
-import sys
-from PySide6.QtWidgets import QApplication, QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QComboBox, QTextEdit
-
-from PySide6.QtCore import Qt
-from conexion import conectar
-STYLE = """
-QWidget {
-    background-color: #f7f8fa;
-    color: #20252b;
-    font-family: Arial;
-    font-size: 12px;
-}
-QFrame#sidebar {
-    background-color: #102b4a;
-}
-QLabel#logo {
-    color: white;
-    background-color: #173b63;
-    border: 2px solid #6fa8dc;
-    border-radius: 34px;
-    font-size: 15px;
-    font-weight: bold;
-}
-QLabel#marca {
-    color: white;
-    font-size: 19px;
-    font-weight: bold;
-}
-QLabel#descripcion {
-    color: #d8e0e8;
-    font-size: 10px;
-}
-QPushButton#menu {
-    text-align: left;
-    background-color: transparent;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 10px 12px;
-    min-height: 18px;
-}
-QPushButton#menu:hover {
-    background-color: #1d4772;
-}
-QPushButton#activo {
-    text-align: left;
-    background-color: #2476c7;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 10px 12px;
-    min-height: 18px;
-}
-QLabel#titulo {
-    font-size: 21px;
-    font-weight: bold;
-}
-QLabel#subtitulo {
-    color: #606a75;
-    font-size: 12px;
-}
-QLineEdit, QComboBox, QTextEdit {
-    background-color: white;
-    border: 1px solid #d3d8de;
-    border-radius: 4px;
-    padding: 8px;
-    min-height: 20px;
-}
-QGroupBox {
-    background-color: white;
-    border: 1px solid #d9dde2;
-    border-radius: 5px;
-    margin-top: 10px;
-    padding: 14px;
-    font-weight: bold;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
-    background-color: #f7f8fa;
-}
-QPushButton#principal {
-    background-color: #2476c7;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 9px 16px;
-    min-height: 18px;
-}
-QPushButton#principal:hover {
-    background-color: #1c62a5;
-}
-QPushButton#secundario {
-    background-color: #e7eaee;
-    color: #30363d;
-    border: none;
-    border-radius: 4px;
-    padding: 9px 16px;
-}
-QTableWidget {
-    background-color: white;
-    border: 1px solid #d9dde2;
-    gridline-color: #e1e4e8;
-}
-QHeaderView::section {
-    background-color: #eef1f4;
-    padding: 7px;
-    border: none;
-    font-weight: bold;
-}
 """
+respaldo.py
+Ventana de copias de seguridad de la base de datos:
+  - Realizar respaldo: genera un archivo .sql con estructura y datos.
+  - Restaurar respaldo: carga un .sql creado por este sistema.
+  - Historial: lista los respaldos hechos (tabla respaldos, con ORM).
+El respaldo y la restauración corren en un hilo para no congelar la ventana.
+"""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def crear_sidebar(activo):
-    sidebar = QFrame()
-    sidebar.setObjectName("sidebar")
-    sidebar.setFixedWidth(265)
+import datetime
+import decimal
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QGroupBox, QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QFileDialog, QMessageBox
+)
+from conexion import conectar
+from Estilos.css import GENERAL
+from hilos.trabajador import ejecutar_en_hilo
+from repositorio import listar_respaldos, registrar_respaldo
 
-    layout = QVBoxLayout(sidebar)
-    layout.setContentsMargins(20, 24, 20, 20)
-    layout.setSpacing(5)
+# Primera línea de todo respaldo: sirve para validar el archivo al restaurar
+CABECERA = "-- Respaldo SIS-CSE"
 
-    encabezado = QHBoxLayout()
-    encabezado.setSpacing(12)
 
-    logo = QLabel("CSE")
-    logo.setObjectName("logo")
-    logo.setAlignment(Qt.AlignCenter)
-    logo.setFixedSize(68, 68)
+def _literal(v):
+    """Convierte un valor de Python a texto SQL (para escribir los INSERT)."""
+    if v is None:
+        return "NULL"
+    if isinstance(v, (bytes, bytearray)):
+        return "0x" + bytes(v).hex() if v else "''"
+    if isinstance(v, bool):
+        return str(int(v))
+    if isinstance(v, (int, float, decimal.Decimal)):
+        return str(v)
+    if isinstance(v, (datetime.datetime, datetime.date, datetime.time, datetime.timedelta)):
+        return "'" + str(v) + "'"
+    if isinstance(v, set):
+        v = ",".join(sorted(v))
+    # Texto: se escapan comillas, barras y saltos de línea
+    s = (str(v).replace("\\", "\\\\").replace("'", "\\'")
+         .replace("\n", "\\n").replace("\r", "\\r").replace("\0", "\\0"))
+    return "'" + s + "'"
 
-    textos = QVBoxLayout()
-    textos.setSpacing(2)
-    marca = QLabel("CSE")
-    marca.setObjectName("marca")
-    descripcion = QLabel("Consejo\nSupremo Electoral\nNicaragua")
-    descripcion.setObjectName("descripcion")
-    textos.addWidget(marca)
-    textos.addWidget(descripcion)
 
-    encabezado.addWidget(logo)
-    encabezado.addLayout(textos)
-    layout.addLayout(encabezado)
-    layout.addSpacing(25)
+def generar_dump(ruta):
+    """Escribe en 'ruta' un archivo .sql con la estructura y los datos de todas
+    las tablas. Cada sentencia ocupa una línea (así es fácil restaurarlo)."""
+    conexion = conectar()
+    cursor = conexion.cursor()
+    cursor.execute("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
+    tablas = [f[0] for f in cursor.fetchall()]
 
-    opciones = [
-        ("⌂  Registrar usuario", "Registrar usuario"),
-        ("⌕  Consultar registros", "Consultar registros"),
-        ("♙  Gestionar usuarios", "Gestionar usuarios"),
-        ("▥  Reportes", "Reportes"),
-        ("⚙  Configuración", "Configuración"),
-    ]
+    with open(ruta, "w", encoding="utf-8", newline="\n") as f:
+        f.write(f"{CABECERA} - {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
+        f.write("SET FOREIGN_KEY_CHECKS=0;\n")
+        for t in tablas:
+            # Estructura de la tabla
+            cursor.execute(f"SHOW CREATE TABLE `{t}`")
+            create = cursor.fetchone()[1].replace("\r", " ").replace("\n", " ")
+            f.write(f"DROP TABLE IF EXISTS `{t}`;\n{create};\n")
+            # Datos de la tabla, de 500 en 500 filas
+            cursor.execute(f"SELECT * FROM `{t}`")
+            cols = ",".join(f"`{d[0]}`" for d in cursor.description)
+            while True:
+                bloque = cursor.fetchmany(500)
+                if not bloque:
+                    break
+                for fila in bloque:
+                    vals = ",".join(_literal(v) for v in fila)
+                    f.write(f"INSERT INTO `{t}` ({cols}) VALUES ({vals});\n")
+        f.write("SET FOREIGN_KEY_CHECKS=1;\n")
 
-    for texto, nombre in opciones:
-        boton = QPushButton(texto)
-        boton.setObjectName("activo" if nombre == activo else "menu")
-        layout.addWidget(boton)
+    cursor.close()
+    conexion.close()
+    return len(tablas)
 
-    layout.addStretch()
 
-    cerrar = QPushButton("↪  Cerrar sesión")
-    cerrar.setObjectName("menu")
-    layout.addWidget(cerrar)
-    return sidebar
+def restaurar_dump(ruta):
+    """Ejecuta un archivo .sql creado por este sistema, reemplazando las tablas."""
+    with open(ruta, "r", encoding="utf-8") as f:
+        lineas = f.read().splitlines()
+    # Seguridad: solo se aceptan archivos generados por este sistema
+    if not lineas or not lineas[0].startswith(CABECERA):
+        raise ValueError("El archivo no es un respaldo generado por este sistema.")
 
-def crear_base(ventana, activo):
-    ventana.setStyleSheet(STYLE)
-    principal = QHBoxLayout(ventana)
-    principal.setContentsMargins(0, 0, 0, 0)
-    principal.setSpacing(0)
-    principal.addWidget(crear_sidebar(activo))
-    contenido = QVBoxLayout()
-    contenido.setContentsMargins(30, 25, 30, 25)
-    contenido.setSpacing(8)
-    principal.addLayout(contenido, 1)
-    return contenido
+    conexion = conectar()
+    cursor = conexion.cursor()
+    try:
+        for linea in lineas:
+            linea = linea.strip()
+            if linea and not linea.startswith("--"):
+                cursor.execute(linea)
+        conexion.commit()
+    finally:
+        cursor.close()
+        conexion.close()
 
-class RespaldoInformacion(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("SIS-CSE - Sistema de Gestión")
-        self.resize(1150, 700)
-        contenido = crear_base(self, "Respaldo")
+
+def hacer_respaldo(ruta, base, descripcion):
+    """Crea el archivo de respaldo y lo anota en el historial (ORM).
+    Se ejecuta en un hilo. Devuelve (cantidad de tablas, tamaño en KB)."""
+    n = generar_dump(ruta)
+    tam = os.path.getsize(ruta) / 1024
+    registrar_respaldo(base, descripcion)
+    return n, tam
+
+
+class RespaldoInformacion(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Respaldo de información")
+        self.setStyleSheet(GENERAL)
+        self.resize(780, 620)
+        self.setModal(True)
+
+        contenido = QVBoxLayout(self)
+        contenido.setContentsMargins(25, 20, 25, 20)
+        contenido.setSpacing(8)
 
         titulo = QLabel("Respaldo de información")
         titulo.setObjectName("titulo")
         contenido.addWidget(titulo)
-        sub = QLabel("Realice copias de seguridad de la base de datos.")
+        sub = QLabel("Realice y restaure copias de seguridad de la base de datos.")
         sub.setObjectName("subtitulo")
         contenido.addWidget(sub)
 
-        fila = QHBoxLayout()
-
-        menu = QGroupBox()
-        ml = QVBoxLayout(menu)
-        for texto in ["Respaldo manual", "Restaurar respaldo", "Historial de respaldos"]:
-            b = QPushButton(texto)
-            b.setObjectName("activo" if texto == "Respaldo manual" else "menu")
-            b.setStyleSheet("text-align:left; color:#20252b; background:#f1f3f5;")
-            ml.addWidget(b)
-        ml.addStretch()
-        fila.addWidget(menu, 1)
-
+        # Datos del respaldo: base de datos y descripción opcional
         info = QGroupBox("Información del respaldo")
         il = QVBoxLayout(info)
         il.addWidget(QLabel("Base de datos"))
-        self.base = QComboBox()
-        self.base.addItems(["SIS_CSE", "SIS_CSE_Respaldo"])
+        self.base = QLineEdit(os.getenv("DB_NAME", "SIS_CSE"))
+        self.base.setReadOnly(True)
         il.addWidget(self.base)
         il.addWidget(QLabel("Descripción (opcional)"))
         self.descripcion = QTextEdit()
-        self.descripcion.setFixedHeight(110)
+        self.descripcion.setFixedHeight(80)
         il.addWidget(self.descripcion)
-        boton = QPushButton("Realizar respaldo")
-        boton.clicked.connect(self.guardar_respaldo)
-        boton.setObjectName("principal")
-        il.addWidget(boton)
-        fila.addWidget(info, 2)
 
-        estado = QGroupBox("Último respaldo")
-        el = QVBoxLayout(estado)
-        el.addWidget(QLabel("Fecha:"))
-        el.addWidget(QLabel("20/09/2026 11:20 a. m."))
-        el.addSpacing(15)
-        el.addWidget(QLabel("Tamaño:"))
-        el.addWidget(QLabel("245 MB"))
-        el.addSpacing(15)
-        el.addWidget(QLabel("Estado:"))
-        el.addWidget(QLabel("Completado"))
-        el.addStretch()
-        fila.addWidget(estado, 1)
+        botones = QHBoxLayout()
+        botones.addStretch()
+        self.btn_restaurar = QPushButton("Restaurar respaldo...")
+        self.btn_restaurar.setObjectName("secundario")
+        self.btn_restaurar.clicked.connect(self.restaurar_respaldo)
+        self.btn_realizar = QPushButton("Realizar respaldo")
+        self.btn_realizar.setObjectName("principal")
+        self.btn_realizar.clicked.connect(self.guardar_respaldo)
+        botones.addWidget(self.btn_restaurar)
+        botones.addWidget(self.btn_realizar)
+        il.addLayout(botones)
+        contenido.addWidget(info)
 
-        contenido.addLayout(fila)
+        # Historial de respaldos anteriores
+        hist = QGroupBox("Historial de respaldos")
+        hl = QVBoxLayout(hist)
+        self.tabla = QTableWidget()
+        self.tabla.setColumnCount(3)
+        self.tabla.setHorizontalHeaderLabels(["FECHA", "BASE DE DATOS", "DESCRIPCIÓN"])
+        self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
+        hl.addWidget(self.tabla)
+        contenido.addWidget(hist, 1)
+
         self.mensaje = QLabel("")
         contenido.addWidget(self.mensaje)
-        contenido.addStretch()
+
+        cerrar = QPushButton("Cerrar")
+        cerrar.setObjectName("secundario")
+        cerrar.clicked.connect(self.accept)
+        fila = QHBoxLayout()
+        fila.addStretch()
+        fila.addWidget(cerrar)
+        contenido.addLayout(fila)
+
+        self.cargar_historial()
+
+    def _bloquear(self, bloqueado):
+        """Desactiva los botones mientras hay un respaldo o restauración en curso."""
+        self.btn_realizar.setEnabled(not bloqueado)
+        self.btn_restaurar.setEnabled(not bloqueado)
+
+    def cargar_historial(self):
+        """READ: trae el historial de respaldos (ORM) en segundo plano."""
+        ejecutar_en_hilo(
+            listar_respaldos,
+            al_terminar=self._mostrar_historial,
+            al_error=lambda m: self.mensaje.setText(f"No se pudo cargar el historial: {m}"),
+        )
+
+    def _mostrar_historial(self, filas):
+        self.tabla.setRowCount(len(filas))
+        for i, fila in enumerate(filas):
+            for j, v in enumerate(fila):
+                self.tabla.setItem(i, j, QTableWidgetItem("" if v is None else str(v)))
+
     def guardar_respaldo(self):
+        """Pide dónde guardar el archivo y lanza el respaldo en un hilo."""
+        nombre_sugerido = (f"respaldo_{self.base.text()}_"
+                           f"{datetime.datetime.now():%Y%m%d_%H%M%S}.sql")
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, "Guardar respaldo", nombre_sugerido, "Archivo SQL (*.sql)"
+        )
+        if not ruta:
+            return
+        if not ruta.lower().endswith(".sql"):
+            ruta += ".sql"
 
-        try:
+        self._bloquear(True)
+        self.mensaje.setText("Realizando respaldo, espere...")
+        ejecutar_en_hilo(
+            hacer_respaldo, ruta, self.base.text(), self.descripcion.toPlainText(),
+            al_terminar=self._respaldo_listo,
+            al_error=self._respaldo_error,
+        )
 
-            conexion = conectar()
-            cursor = conexion.cursor()
+    def _respaldo_listo(self, resultado):
+        n, tam = resultado
+        self._bloquear(False)
+        self.descripcion.clear()
+        self.mensaje.setText(f"Respaldo completado: {n} tablas, {tam:.1f} KB.")
+        self.cargar_historial()
 
-            cursor.execute("""
-                INSERT INTO respaldos
-                (
-                    nombre_bd,
-                    descripcion,
-                    fecha_respaldo
-                )
-                VALUES
-                (%s,%s,NOW())
-            """,
-            (
-                self.base.currentText(),
-                self.descripcion.toPlainText()
-            ))
+    def _respaldo_error(self, mensaje):
+        self._bloquear(False)
+        self.mensaje.setText(f"Error: {mensaje}")
 
-            conexion.commit()
+    def restaurar_respaldo(self):
+        """Pide el archivo .sql, confirma y restaura en un hilo."""
+        ruta, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar respaldo", "", "Archivo SQL (*.sql)"
+        )
+        if not ruta:
+            return
+        r = QMessageBox.warning(
+            self, "Restaurar respaldo",
+            "Esto REEMPLAZARÁ todas las tablas actuales con el contenido del archivo.\n"
+            "Los datos actuales se perderán. ¿Desea continuar?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if r != QMessageBox.Yes:
+            return
 
-            self.mensaje.setText(
-                "Respaldo registrado correctamente"
-            )
+        self._bloquear(True)
+        self.mensaje.setText("Restaurando, espere...")
+        ejecutar_en_hilo(
+            restaurar_dump, ruta,
+            al_terminar=self._restauracion_lista,
+            al_error=self._respaldo_error,
+        )
 
-            cursor.close()
-            conexion.close()
+    def _restauracion_lista(self, _):
+        self._bloquear(False)
+        self.mensaje.setText("Respaldo restaurado correctamente.")
+        self.cargar_historial()
 
-        except Exception as e:
 
-            self.mensaje.setText(
-                f"Error: {e}"
-            )
+# Solo para probar esta ventana sola
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = RespaldoInformacion()
-    ventana.show()
-    sys.exit(app.exec())
+    ventana.exec()

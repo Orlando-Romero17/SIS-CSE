@@ -1,11 +1,21 @@
-
+"""
+configuracion.py
+Página de configuración general del sistema (nombre de la institución,
+idioma y tema). Lee y guarda en la tabla configuracion con el ORM, en hilos.
+Desde el menú interno se abre la ventana de Respaldo.
+"""
+import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QGroupBox, QLineEdit, QComboBox
+    QPushButton, QGroupBox, QLineEdit, QComboBox, QMessageBox
 )
-from conexion import conectar
-from Estilos.css import CONFIGURACION
+from Estilos.css import GENERAL
+from paginas.respaldo import RespaldoInformacion
+from hilos.trabajador import ejecutar_en_hilo
+from repositorio import obtener_configuracion, guardar_configuracion as guardar_config_bd
 
 
 class Configuracion(QWidget):
@@ -26,12 +36,12 @@ class Configuracion(QWidget):
 
         cuerpo = QHBoxLayout()
 
-        # Menú interno de configuración
+        # ----- Menú interno de configuración -----
         menu = QGroupBox()
         ml = QVBoxLayout(menu)
         for texto in ["General", "Seguridad", "Respaldo", "Preferencias"]:
             b = QPushButton(texto)
-            if texto == "General":
+            if texto == "General":  # sección activa
                 b.setStyleSheet(
                     "text-align:left; color:white; background:#2476c7; "
                     "border:none; border-radius:4px; padding:10px 12px;"
@@ -41,11 +51,12 @@ class Configuracion(QWidget):
                     "text-align:left; color:#20252b; background:#f1f3f5; "
                     "border:none; border-radius:4px; padding:10px 12px;"
                 )
+            b.clicked.connect(lambda _=False, t=texto: self.abrir_seccion(t))
             ml.addWidget(b)
         ml.addStretch()
         cuerpo.addWidget(menu, 1)
 
-        # Opciones generales
+        # ----- Opciones generales -----
         ajustes = QGroupBox("Opciones generales")
         al = QVBoxLayout(ajustes)
 
@@ -84,61 +95,56 @@ class Configuracion(QWidget):
 
         self.cargar_configuracion()
 
+    def abrir_seccion(self, nombre):
+        """Abre la sección elegida del menú interno."""
+        if nombre == "Respaldo":
+            RespaldoInformacion(self).exec()
+        elif nombre != "General":
+            QMessageBox.information(
+                self, nombre, f"La sección «{nombre}» estará disponible próximamente."
+            )
+
     def cargar_configuracion(self):
-        try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-            cursor.execute("""
-                SELECT nombre_institucion, idioma, tema
-                FROM configuracion
-                LIMIT 1
-            """)
-            resultado = cursor.fetchone()
-            cursor.close()
-            conexion.close()
+        """READ: trae la configuración guardada (ORM) en segundo plano."""
+        ejecutar_en_hilo(
+            obtener_configuracion,
+            al_terminar=self._mostrar_configuracion,
+            al_error=lambda m: self.mensaje.setText(f"Error: {m}"),
+        )
 
-            if resultado:
-                self.nombre.setText(resultado[0] or "")
-                if resultado[1]:
-                    self.idioma.setCurrentText(resultado[1])
-                if resultado[2]:
-                    self.tema.setCurrentText(resultado[2])
-
-        except Exception as e:
-            print("Error:", e)
+    def _mostrar_configuracion(self, c):
+        """Coloca los valores guardados en los campos del formulario."""
+        if c:
+            self.nombre.setText(c["nombre"])
+            if c["idioma"]:
+                self.idioma.setCurrentText(c["idioma"])
+            if c["tema"]:
+                self.tema.setCurrentText(c["tema"])
 
     def guardar_configuracion(self):
-        try:
-            conexion = conectar()
-            cursor = conexion.cursor()
-            cursor.execute("""
-                UPDATE configuracion
-                SET nombre_institucion=%s, idioma=%s, tema=%s
-                WHERE id_configuracion = 1
-            """, (
-                self.nombre.text().strip(),
-                self.idioma.currentText(),
-                self.tema.currentText(),
-            ))
-            conexion.commit()
-            filas = cursor.rowcount
-            cursor.close()
-            conexion.close()
+        """UPDATE: guarda los cambios (ORM) en segundo plano."""
+        if not self.nombre.text().strip():
+            QMessageBox.warning(self, "Validación", "Ingrese el nombre de la institución")
+            return
+        self.mensaje.setText("Guardando...")
+        ejecutar_en_hilo(
+            guardar_config_bd,
+            self.nombre.text().strip(), self.idioma.currentText(), self.tema.currentText(),
+            al_terminar=self._guardado,
+            al_error=lambda m: self.mensaje.setText(f"Error: {m}"),
+        )
 
-            if filas == 0:
-                self.mensaje.setText("No existe la fila con id_configuracion = 1")
-            else:
-                self.mensaje.setText("Configuración guardada")
-
-        except Exception as e:
-            self.mensaje.setText(f"Error: {e}")
+    def _guardado(self, ok):
+        self.mensaje.setText(
+            "Configuración guardada" if ok else "No existe la fila con id_configuracion = 1"
+        )
 
 
 # Solo para probar esta página sola
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = Configuracion()
-    ventana.setStyleSheet(CONFIGURACION)
+    ventana.setStyleSheet(GENERAL)
     ventana.resize(900, 650)
     ventana.show()
     sys.exit(app.exec())
